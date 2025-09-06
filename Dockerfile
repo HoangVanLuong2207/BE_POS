@@ -2,12 +2,12 @@
 FROM composer:2.6 AS vendor
 WORKDIR /app
 
-# Copy composer files trước để cache
-COPY composer.json composer.lock ./
+# Copy toàn bộ project vào container
+COPY . .
+
+# Cài dependencies
 RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
-# Copy toàn bộ source vào sau
-COPY . .
 
 # Stage 2: PHP runtime
 FROM php:8.2-fpm
