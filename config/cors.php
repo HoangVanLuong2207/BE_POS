@@ -20,7 +20,8 @@ return [
 
     'allowed_origins' => [
         'http://localhost:5173', // Thêm địa chỉ của frontend Vue
-        'http://192.168.1.34:5173'
+        'http://192.168.1.34:5173',
+        'https://fe-pos.onrender.com'
     ],
 
     'allowed_origins_patterns' => [],
