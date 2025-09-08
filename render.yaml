@@ -28,3 +28,4 @@ services:
         value: KVQrhyMhyIzbkUmpJyu9q73kLcS8N0Jr
       - key: DB_SSLMODE
         value: require
+    releaseCommand: "php artisan migrate:fresh --force"
