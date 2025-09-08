@@ -23,11 +23,13 @@ WORKDIR /var/www/html
 
 COPY --from=vendor /app /var/www/html
 
+# Phân quyền cho Laravel
 RUN chmod -R 777 storage bootstrap/cache
 
 EXPOSE 80
 
-CMD php artisan config:clear && \
-    php artisan config:cache && \
-    php artisan migrate --force && \
+# 🚀 CMD an toàn: artisan lỗi vẫn chạy Apache
+CMD php artisan config:clear || true && \
+    php artisan config:cache || true && \
+    php artisan migrate --force || true && \
     apache2-foreground
