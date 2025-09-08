@@ -2,14 +2,11 @@
 FROM composer:2.6 AS vendor
 WORKDIR /app
 
-# Copy composer files trước (tăng cache efficiency)
-COPY composer.json composer.lock ./
+# Copy toàn bộ source code vào (để có file artisan)
+COPY . .
 
 # Cài dependencies
 RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
-
-# Copy toàn bộ source code
-COPY . .
 
 # Stage 2: PHP runtime + Apache
 FROM php:8.2-apache
@@ -36,4 +33,4 @@ RUN chmod -R 777 storage bootstrap/cache
 # Expose port 80 (Apache default)
 EXPOSE 80
 
-# Apache sẽ start mặc định qua entrypoint của image php:apache
+# Apache sẽ start mặc định
