@@ -5,6 +5,7 @@ services:
     plan: free
     branch: main
     dockerfilePath: ./Dockerfile
+    startCommand: php artisan migrate --force
     envVars:
       - key: APP_ENV
         value: production
@@ -13,16 +14,18 @@ services:
       - key: APP_DEBUG
         value: false
       - key: APP_URL
-        value: https://your-app.onrender.com
+        value: https://pos-6k7w.onrender.com
       - key: DB_CONNECTION
-        value: mysql
+        value: pgsql
       - key: DB_HOST
-        value: your-db-host
+        value: dpg-d2tq71je5dus73e37g70-a.oregon-postgres.render.com
       - key: DB_PORT
-        value: 3306
+        value: 5432
       - key: DB_DATABASE
-        value: your-db-name
+        value: pos_015a
       - key: DB_USERNAME
-        value: your-db-user
+        value: root
       - key: DB_PASSWORD
-        sync: false
+        value: KVQrhyMhyIzbkUmpJyu9q73kLcS8N0Jr
+      - key: DB_SSLMODE
+        value: require
