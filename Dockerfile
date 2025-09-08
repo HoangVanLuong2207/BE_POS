@@ -2,13 +2,11 @@
 FROM composer:2.6 AS vendor
 WORKDIR /app
 
-# Copy file composer trước để tận dụng cache
-COPY composer.json composer.lock ./
-
-RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
-
-# Copy toàn bộ source code
+# Copy toàn bộ project (bao gồm artisan)
 COPY . .
+
+# Cài dependencies
+RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
 
 # Stage 2: PHP + Apache
 FROM php:8.2-apache
