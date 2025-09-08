@@ -10,12 +10,12 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-di
 
 
 # Stage 2: PHP runtime
-FROM php:8.2-fpm
+FROM php:8.2-cli
 
 # Cài extension Laravel cần
 RUN apt-get update && apt-get install -y \
-    git unzip libzip-dev libpng-dev \
-    && docker-php-ext-install pdo pdo_mysql zip gd
+    git unzip libzip-dev libpng-dev libpq-dev \
+    && docker-php-ext-install pdo pdo_pgsql zip gd
 
 WORKDIR /var/www/html
 
@@ -27,5 +27,11 @@ RUN chmod -R 777 storage bootstrap/cache
 
 EXPOSE 8000
 
-# Chạy Laravel server
-CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+# Khi container start:
+# 1. Clear cache
+# 2. Chạy migrate --force
+# 3. Start Laravel server
+CMD php artisan config:clear && \
+    php artisan config:cache && \
+    php artisan migrate --force && \
+    php artisan serve --host=0.0.0.0 --port=8000
