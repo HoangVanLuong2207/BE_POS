@@ -16,6 +16,76 @@ use Exception;
 class ProductController extends Controller
 {
     /**
+     * Extract Cloudinary public_id (including folders) from a secure URL
+     */
+    private function getCloudinaryPublicIdFromUrl(?string $url): ?string
+    {
+        if (!$url || !str_contains($url, 'res.cloudinary.com')) {
+            return null;
+        }
+
+        $path = parse_url($url, PHP_URL_PATH) ?: '';
+        // Expecting something like: /<cloud_name>/image/upload/v1699999999/products/filename.jpg
+        $uploadPos = strpos($path, '/upload/');
+        if ($uploadPos === false) {
+            return null;
+        }
+        $afterUpload = substr($path, $uploadPos + strlen('/upload/'));
+        // Remove version prefix if present (e.g., v1699999999/)
+        $afterUpload = preg_replace('#^v\d+/#', '', $afterUpload);
+        // Remove leading slash
+        $afterUpload = ltrim($afterUpload, '/');
+        // Strip extension
+        $dotPos = strrpos($afterUpload, '.');
+        if ($dotPos !== false) {
+            $afterUpload = substr($afterUpload, 0, $dotPos);
+        }
+        return $afterUpload ?: null;
+    }
+
+    /**
+     * Delete an image from Cloudinary using a signed API request
+     */
+    private function destroyCloudinaryPublicId(?string $publicId): void
+    {
+        if (!$publicId) {
+            return;
+        }
+
+        try {
+            $cloudName = env('CLOUDINARY_CLOUD_NAME');
+            $apiKey = env('CLOUDINARY_API_KEY');
+            $apiSecret = env('CLOUDINARY_API_SECRET');
+            if (!$cloudName || !$apiKey || !$apiSecret) {
+                return;
+            }
+
+            $timestamp = time();
+            $paramsToSign = "public_id={$publicId}&timestamp={$timestamp}";
+            $signature = sha1($paramsToSign.$apiSecret);
+
+            $ch = curl_init();
+            curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/destroy");
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, [
+                'public_id' => $publicId,
+                'api_key' => $apiKey,
+                'timestamp' => $timestamp,
+                'signature' => $signature,
+            ]);
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $curlError = curl_error($ch);
+            curl_close($ch);
+            if ($httpCode !== 200) {
+                Log::warning('Cloudinary destroy failed', ['http' => $httpCode, 'curl' => $curlError, 'resp' => $response]);
+            }
+        } catch (Exception $e) {
+            Log::warning('Cloudinary destroy exception: '.$e->getMessage());
+        }
+    }
+    /**
      * Lấy hoặc tạo dashboard cho tháng hiện tại
      */
     private function getOrCreateDashboard()
@@ -196,8 +266,8 @@ class ProductController extends Controller
 
             $product = Product::create($validated);
 
-            // Temporarily disable dashboard update to isolate the issue
-            // $this->updateDashboard('create', $product, null, $request->input('status', 'sales'));
+            // Update dashboard for admin management (default) or provided status
+            $this->updateDashboard('create', $product, null, $request->input('status', 'admin_management'));
 
             DB::commit();
             return response()->json(['success' => true, 'message' => 'Thêm sản phẩm thành công', 'data' => $product], 201);
@@ -243,15 +313,62 @@ class ProductController extends Controller
             ];
 
             if ($request->hasFile('image')) {
-                $validated['image_url'] = Cloudinary::upload(
-                    $request->file('image')->getRealPath(),
-                    ['folder' => 'products']
-                )->getSecurePath();
+                // Keep old image to delete after successful upload
+                $oldImageUrl = $product->image_url;
+
+                try {
+                    // Use same signed upload logic as in store
+                    $cloudName = env('CLOUDINARY_CLOUD_NAME');
+                    $apiKey = env('CLOUDINARY_API_KEY');
+                    $apiSecret = env('CLOUDINARY_API_SECRET');
+                    if (!$cloudName || !$apiKey || !$apiSecret) {
+                        throw new Exception('Cloudinary credentials not configured');
+                    }
+                    $file = $request->file('image');
+                    $filename = time() . '_' . $file->getClientOriginalName();
+                    $timestamp = time();
+                    $paramsToSign = "folder=products&timestamp={$timestamp}";
+                    $signature = sha1($paramsToSign.$apiSecret);
+
+                    $ch = curl_init();
+                    curl_setopt($ch, CURLOPT_URL, "https://api.cloudinary.com/v1_1/{$cloudName}/image/upload");
+                    curl_setopt($ch, CURLOPT_POST, true);
+                    curl_setopt($ch, CURLOPT_POSTFIELDS, [
+                        'file' => new \CURLFile($file->getRealPath(), $file->getMimeType(), $filename),
+                        'api_key' => $apiKey,
+                        'timestamp' => $timestamp,
+                        'signature' => $signature,
+                        'folder' => 'products',
+                    ]);
+                    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                    $response = curl_exec($ch);
+                    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                    $curlError = curl_error($ch);
+                    curl_close($ch);
+                    if ($httpCode === 200) {
+                        $result = json_decode($response, true);
+                        $validated['image_url'] = $result['secure_url'];
+                        // delete old cloudinary image if applicable
+                        $this->destroyCloudinaryPublicId($this->getCloudinaryPublicIdFromUrl($oldImageUrl));
+                    } else {
+                        throw new Exception('Cloudinary upload failed: HTTP '.$httpCode.'; CURL '.$curlError.'; Resp '.$response);
+                    }
+                } catch (Exception $e) {
+                    Log::error('Cloudinary upload error (update): ' . $e->getMessage());
+                    // Fallback to local storage if Cloudinary fails
+                    $filename = time() . '_' . $request->file('image')->getClientOriginalName();
+                    $request->file('image')->move(public_path('storage/products'), $filename);
+                    $validated['image_url'] = 'storage/products/' . $filename;
+                    // if old image was local, optionally remove it
+                    if ($oldImageUrl && str_starts_with($oldImageUrl, 'storage/products/')) {
+                        @unlink(public_path($oldImageUrl));
+                    }
+                }
             }
 
             $product->update($validated);
 
-            $this->updateDashboard('update', $product, $oldValues, $request->input('status', 'sales'));
+            $this->updateDashboard('update', $product, $oldValues, $request->input('status', 'admin_management'));
 
             DB::commit();
             return response()->json(['success' => true, 'message' => 'Cập nhật thành công', 'data' => $product]);
@@ -276,7 +393,10 @@ class ProductController extends Controller
 
         DB::beginTransaction();
         try {
-            $status = $request->input('status', 'sales');
+            // Delete image from Cloudinary if applicable
+            $this->destroyCloudinaryPublicId($this->getCloudinaryPublicIdFromUrl($product->image_url));
+
+            $status = $request->input('status', 'admin_management');
             $this->updateDashboard('delete', $product, null, $status);
             $product->delete();
 
