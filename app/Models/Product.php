@@ -17,7 +17,7 @@ class Product extends Model
         'image_url',
         'active',
         'quantity',
-        'category_id',
+        'category_id'
     ];
 
     public function category()

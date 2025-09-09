@@ -10,9 +10,11 @@ class Dashboard extends Model
     use HasFactory;
     protected $table = 'dashboard';
     protected $fillable = [
-        'name',
-        'description',
-        'active',
+        'year',
+        'month',
+        'subtotal',
+        'total',
+        'profit',
     ];
 
 }
