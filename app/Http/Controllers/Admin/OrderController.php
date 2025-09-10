@@ -87,13 +87,34 @@ class OrderController extends Controller
         }
     }
 
-    public function index()
+    public function index(Request $request)
     {
         try {
-            $orders = Order::with(['user', 'table', 'products'])->get();
+            $keyword = $request->query('keyword');
+            $limit   = (int) $request->query('limit', 10);
+
+            $query = Order::with('items');
+            if ($keyword) {
+                $query->where(function ($q) use ($keyword) {
+                    $q->where('customer_name', 'like', "%$keyword%")
+                      ->orWhere('customer_phone', 'like', "%$keyword%")
+                      ->orWhere('id', $keyword);
+                });
+            }
+
+            $orders = $query->orderBy('id', 'desc')->paginate($limit);
+
             return response()->json([
                 'success' => true,
-                'data' => $orders
+                'data' => [
+                    'orders' => $orders->items(),
+                    'total'  => $orders->total(),
+                    'pagination' => [
+                        'current_page' => $orders->currentPage(),
+                        'last_page'    => $orders->lastPage(),
+                        'per_page'     => $orders->perPage(),
+                    ]
+                ]
             ]);
         } catch (Exception $e) {
             Log::error('Error in OrderController@index: ' . $e->getMessage());
@@ -104,6 +125,25 @@ class OrderController extends Controller
             ], 500);
         }
     }
+
+    public function show(Order $order)
+    {
+        try {
+            $order->load('items');
+            return response()->json([
+                'success' => true,
+                'data' => $order
+            ]);
+        } catch (Exception $e) {
+            Log::error('Error in OrderController@show: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Lỗi khi lấy chi tiết đơn hàng',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
 
     public function store(Request $request)
     {
