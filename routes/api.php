@@ -4,6 +4,7 @@
 use App\Http\Controllers\Admin\CategoryController as AdminCategoryController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\OrderController;
+use App\Http\Controllers\Admin\PurchaseOrderController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CategoryController;
 use App\Http\Controllers\Admin\ProductController;
@@ -36,6 +37,19 @@ Route::post('/admin/products', [ProductController::class, 'store']);
 Route::put('/admin/products/{product}', [ProductController::class, 'update']);
 Route::delete('/admin/products/{product}', [ProductController::class, 'destroy']);
 
+// Purchase Orders Routes
+Route::get('/admin/orders/purchase', [PurchaseOrderController::class, 'index']);
+Route::post('/admin/orders/purchase', [PurchaseOrderController::class, 'store']);
+Route::get('/admin/orders/purchase/{purchaseOrder}', [PurchaseOrderController::class, 'show']);
+Route::put('/admin/orders/purchase/{purchaseOrder}', [PurchaseOrderController::class, 'update']);
+Route::delete('/admin/orders/purchase/{purchaseOrder}', [PurchaseOrderController::class, 'destroy']);
+
+// Bulk Import Routes
+Route::get('/admin/purchase-orders/products/import', [PurchaseOrderController::class, 'getProductsForImport']);
+Route::post('/admin/products/bulk-import', [PurchaseOrderController::class, 'bulkImportProducts']);
+
+Route::get('/admin/orders/sales', [OrderController::class, 'index']);
+Route::get('/admin/orders/sales/{order}', [OrderController::class, 'show']);
 //staff
 Route::post('/staff/orders', [OrderController::class, 'store']);
 // Group các route cần xác thực

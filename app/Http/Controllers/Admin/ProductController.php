@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Category;
 use App\Models\Product;
 use App\Models\Dashboard;
+use App\Models\PurchaseOrder;
+use App\Models\PurchaseOrderItem;
 use CloudinaryLabs\CloudinaryLaravel\Facades\Cloudinary;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +17,42 @@ use Exception;
 
 class ProductController extends Controller
 {
+    /**
+     * Create a purchase order for a single product movement (incoming stock)
+     */
+    private function createPurchaseOrderForIncoming(Product $product, int $incomingQuantity, float $purchasePrice, float $sellingPrice, ?string $note = null): void
+    {
+        if ($incomingQuantity <= 0) {
+            return;
+        }
+
+        $purchaseOrder = PurchaseOrder::create([
+            'purchase_number'   => PurchaseOrder::generatePurchaseNumber(),
+            'supplier_name'     => 'Internal Supplier',
+            'supplier_phone'    => null,
+            'supplier_address'  => null,
+            'purchase_date'     => now(),
+            'due_date'          => null,
+            'notes'             => $note,
+            'status'            => 'confirmed',
+            'paid_amount'       => 0,
+            'created_by'        => 1,
+        ]);
+
+        $purchaseOrder->items()->create([
+            'product_id'          => $product->id,
+            'product_name'        => $product->name,
+            'product_description' => $product->description,
+            'purchase_price'      => $purchasePrice,
+            'selling_price'       => $sellingPrice,
+            'quantity'            => $incomingQuantity,
+            'unit'                => 'cái',
+            'notes'               => $note,
+        ]);
+
+        $purchaseOrder->refresh();
+        $purchaseOrder->updateTotalAmount();
+    }
     /**
      *
      * Extract Cloudinary public_id (including folders) from a secure URL
@@ -303,6 +341,17 @@ class ProductController extends Controller
 
             $product = Product::create($validated);
 
+            // Create purchase order if initial quantity > 0
+            if (($validated['quantity'] ?? 0) > 0) {
+                $this->createPurchaseOrderForIncoming(
+                    $product,
+                    (int) $validated['quantity'],
+                    (float) $validated['price'],
+                    (float) $validated['payprice'],
+                    'Initial stock on product creation'
+                );
+            }
+
             // Update dashboard for admin management (default) or provided status
             $this->updateDashboard('create', $product, null, $request->input('status', 'admin_management'));
 
@@ -412,7 +461,22 @@ class ProductController extends Controller
                 }
             }
 
+            // Detect quantity increase to create purchase order item
+            $oldQuantity = (int) $product->quantity;
+            $newQuantity = isset($validated['quantity']) ? (int) $validated['quantity'] : $oldQuantity;
+
             $product->update($validated);
+
+            $increasedBy = $newQuantity - $oldQuantity;
+            if ($increasedBy > 0) {
+                $this->createPurchaseOrderForIncoming(
+                    $product,
+                    $increasedBy,
+                    (float) ($validated['price'] ?? $product->price),
+                    (float) ($validated['payprice'] ?? $product->payprice),
+                    'Stock increase via product update'
+                );
+            }
 
             $this->updateDashboard('update', $product, $oldValues, $request->input('status', 'admin_management'));
 
@@ -453,7 +517,6 @@ class ProductController extends Controller
             }
 
             $status = $request->input('status', 'admin_management');
-            $this->updateDashboard('delete', $product, null, $status);
             $product->delete();
 
             DB::commit();
