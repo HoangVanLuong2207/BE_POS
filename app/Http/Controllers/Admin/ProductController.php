@@ -16,6 +16,7 @@ use Exception;
 class ProductController extends Controller
 {
     /**
+     *
      * Extract Cloudinary public_id (including folders) from a secure URL
      */
     private function getCloudinaryPublicIdFromUrl(?string $url): ?string
@@ -46,18 +47,25 @@ class ProductController extends Controller
     /**
      * Delete an image from Cloudinary using a signed API request
      */
-    private function destroyCloudinaryPublicId(?string $publicId): void
+    private function destroyCloudinaryPublicId(?string $publicId): bool
     {
         if (!$publicId) {
-            return;
+            Log::info('No public ID provided for Cloudinary deletion');
+            return false;
         }
 
         try {
             $cloudName = env('CLOUDINARY_CLOUD_NAME');
             $apiKey = env('CLOUDINARY_API_KEY');
             $apiSecret = env('CLOUDINARY_API_SECRET');
+
             if (!$cloudName || !$apiKey || !$apiSecret) {
-                return;
+                Log::error('Cloudinary credentials not configured for deletion', [
+                    'cloud_name_set' => !empty($cloudName),
+                    'api_key_set' => !empty($apiKey),
+                    'api_secret_set' => !empty($apiSecret)
+                ]);
+                return false;
             }
 
             $timestamp = time();
@@ -74,15 +82,40 @@ class ProductController extends Controller
                 'signature' => $signature,
             ]);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 30);
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curlError = curl_error($ch);
             curl_close($ch);
-            if ($httpCode !== 200) {
-                Log::warning('Cloudinary destroy failed', ['http' => $httpCode, 'curl' => $curlError, 'resp' => $response]);
+
+            if ($httpCode === 200) {
+                $result = json_decode($response, true);
+                if (isset($result['result']) && $result['result'] === 'ok') {
+                    Log::info('Successfully deleted image from Cloudinary', ['public_id' => $publicId]);
+                    return true;
+                } else {
+                    Log::warning('Cloudinary deletion returned unexpected result', [
+                        'public_id' => $publicId,
+                        'response' => $result
+                    ]);
+                    return false;
+                }
+            } else {
+                Log::error('Cloudinary destroy failed', [
+                    'public_id' => $publicId,
+                    'http_code' => $httpCode,
+                    'curl_error' => $curlError,
+                    'response' => $response
+                ]);
+                return false;
             }
         } catch (Exception $e) {
-            Log::warning('Cloudinary destroy exception: '.$e->getMessage());
+            Log::error('Cloudinary destroy exception', [
+                'public_id' => $publicId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return false;
         }
     }
     /**
@@ -109,58 +142,62 @@ class ProductController extends Controller
     /**
      * Cập nhật dashboard
      */
-  private function updateDashboard(string $type, Product $product, array $oldValues = null, string $status = 'sales')
-{
-    try {
-        $dashboard = $this->getOrCreateDashboard();
+    private function updateDashboard(string $type, Product $product, ?array $oldValues = null, string $status = 'sales')
+    {
+        try {
+            // Get or create the dashboard record
+            $dashboard = $this->getOrCreateDashboard();
 
-        // Initialize values if they are null
-        $dashboard->subtotal = $dashboard->subtotal ?? 0;
-        $dashboard->total = $dashboard->total ?? 0;
-        $dashboard->profit = $dashboard->profit ?? 0;
+            // Initialize values if they are null to prevent calculation errors
+            $dashboard->subtotal = $dashboard->subtotal ?? 0;
+            $dashboard->total = $dashboard->total ?? 0;
+            $dashboard->profit = $dashboard->profit ?? 0;
 
-        switch ($type) {
-            case 'create':
-                if ($status === 'admin_management') {
-                    $dashboard->subtotal += $product->price * $product->quantity;
-                } else {
-                    $dashboard->total += $product->payprice * $product->quantity;
-                }
-                break;
-
-            case 'update':
-                if (!$oldValues) {
-                    // Không có dữ liệu cũ thì bỏ qua, tránh lỗi null
+            switch ($type) {
+                case 'create':
+                    if ($status === 'admin_management') {
+                        $dashboard->subtotal += $product->price * $product->quantity;
+                    } else {
+                        $dashboard->total += $product->payprice * $product->quantity;
+                    }
                     break;
-                }
-                $oldSubtotal = $oldValues['price'] * $oldValues['quantity'];
-                $oldTotal    = $oldValues['payprice'] * $oldValues['quantity'];
-                $newSubtotal = $product->price * $product->quantity;
-                $newTotal    = $product->payprice * $product->quantity;
 
-                if ($status === 'admin_management') {
-                    $dashboard->subtotal += ($newSubtotal - $oldSubtotal);
-                } else {
-                    $dashboard->total += ($newTotal - $oldTotal);
-                }
-                break;
+                case 'update':
+                    // Check if old values exist to avoid a null reference error
+                    if (!$oldValues) {
+                        break;
+                    }
 
-            case 'delete':
-                if ($status === 'admin_management') {
-                    $dashboard->subtotal -= $product->price * $product->quantity;
-                } else {
-                    $dashboard->total -= $product->payprice * $product->quantity;
-                }
-                break;
+                    // Calculate the change in values
+                    $oldSubtotal = $oldValues['price'] * $oldValues['quantity'];
+                    $oldTotal    = $oldValues['payprice'] * $oldValues['quantity'];
+                    $newSubtotal = $product->price * $product->quantity;
+                    $newTotal    = $product->payprice * $product->quantity;
+
+                    if ($status === 'admin_management') {
+                        $dashboard->subtotal += ($newSubtotal - $oldSubtotal);
+                    } else {
+                        $dashboard->total += ($newTotal - $oldTotal);
+                    }
+                    break;
+
+                case 'delete':
+                    if ($status === 'admin_management') {
+                        $dashboard->subtotal -= $product->price * $product->quantity;
+                    } else {
+                        $dashboard->total -= $product->payprice * $product->quantity;
+                    }
+                    break;
+            }
+
+            // Recalculate and save the dashboard profit and totals
+            $dashboard->profit = $dashboard->total - $dashboard->subtotal;
+            $dashboard->save();
+        } catch (Exception $e) {
+            // Log the error but don't re-throw to prevent the main action from failing
+            Log::error('updateDashboard error: ' . $e->getMessage());
         }
-
-        $dashboard->profit = $dashboard->total - $dashboard->subtotal;
-        $dashboard->save();
-    } catch (Exception $e) {
-        Log::error('updateDashboard error: ' . $e->getMessage());
-        // Don't throw the error, just log it to prevent product creation from failing
     }
-}
 
 
     /**
@@ -349,7 +386,16 @@ class ProductController extends Controller
                         $result = json_decode($response, true);
                         $validated['image_url'] = $result['secure_url'];
                         // delete old cloudinary image if applicable
-                        $this->destroyCloudinaryPublicId($this->getCloudinaryPublicIdFromUrl($oldImageUrl));
+                        $oldPublicId = $this->getCloudinaryPublicIdFromUrl($oldImageUrl);
+                        if ($oldPublicId) {
+                            $deletionResult = $this->destroyCloudinaryPublicId($oldPublicId);
+                            if (!$deletionResult) {
+                                Log::warning('Failed to delete old image during product update', [
+                                    'product_id' => $product->id,
+                                    'old_public_id' => $oldPublicId
+                                ]);
+                            }
+                        }
                     } else {
                         throw new Exception('Cloudinary upload failed: HTTP '.$httpCode.'; CURL '.$curlError.'; Resp '.$response);
                     }
@@ -394,7 +440,17 @@ class ProductController extends Controller
         DB::beginTransaction();
         try {
             // Delete image from Cloudinary if applicable
-            $this->destroyCloudinaryPublicId($this->getCloudinaryPublicIdFromUrl($product->image_url));
+            $publicId = $this->getCloudinaryPublicIdFromUrl($product->image_url);
+            if ($publicId) {
+                $deletionResult = $this->destroyCloudinaryPublicId($publicId);
+                if (!$deletionResult) {
+                    Log::warning('Failed to delete image from Cloudinary during product deletion', [
+                        'product_id' => $product->id,
+                        'public_id' => $publicId
+                    ]);
+                    // Continue with product deletion even if image deletion fails
+                }
+            }
 
             $status = $request->input('status', 'admin_management');
             $this->updateDashboard('delete', $product, null, $status);
